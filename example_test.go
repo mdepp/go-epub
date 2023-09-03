@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 
-	"github.com/go-shiori/go-epub"
+	"github.com/mdepp/go-epub"
 )
 
 func ExampleEpub_AddCSS() {
