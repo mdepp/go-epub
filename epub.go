@@ -110,6 +110,10 @@ img {
 	audioFileFormat           = "audio%04d%s"
 )
 
+type epubAssemblyState struct {
+	sectionIndex int
+}
+
 // Epub implements an EPUB file.
 type Epub struct {
 	sync.Mutex
@@ -139,6 +143,8 @@ type Epub struct {
 	title    string
 	// Table of contents
 	toc *toc
+	// Internal state used to optimize epub assembly
+	assemblyState epubAssemblyState
 }
 
 type epubCover struct {
@@ -320,49 +326,48 @@ func (e *Epub) AddSubSection(parentFilename string, body string, sectionTitle st
 	return e.addSection(parentFilename, body, sectionTitle, internalFilename, internalCSSPath)
 }
 
-func (e *Epub) addSection(parentFilename string, body string, sectionTitle string, internalFilename string, internalCSSPath string) (string, error) {
+func (e *Epub) findParentIndex(parentFilename string) int {
 	parentIndex := -1
+	for item, section := range e.sections {
+		if section.filename == parentFilename {
+			parentIndex = item
+		}
+	}
+	return parentIndex
+}
 
-	// Generate a filename if one isn't provided
-	if internalFilename == "" {
-		index := 1
-		for internalFilename == "" {
-			internalFilename = fmt.Sprintf(sectionFileFormat, index)
-			for item, section := range e.sections {
-				if section.filename == parentFilename {
-					parentIndex = item
-				}
-				if section.filename == internalFilename {
-					internalFilename, index = "", index+1
-					if parentFilename == "" || parentIndex != -1 {
-						break
-					}
-				}
-				// Check for nested sections with the same filename to avoid duplicate entries
-				if section.children != nil {
-					for _, subsection := range *section.children {
-						if subsection.filename == internalFilename {
-							internalFilename, index = "", index+1
-						}
-					}
+func (e *Epub) hasInternalFilename(internalFilename string) bool {
+	for _, section := range e.sections {
+		if section.filename == internalFilename {
+			return true
+		}
+		if section.children != nil {
+			for _, subsection := range *section.children {
+				if subsection.filename == internalFilename {
+					return true
 				}
 			}
 		}
+	}
+	return false
+}
+
+func (e *Epub) addSection(parentFilename string, body string, sectionTitle string, internalFilename string, internalCSSPath string) (string, error) {
+	parentIndex := e.findParentIndex(parentFilename)
+
+	// Generate a filename if one isn't provided
+	if internalFilename == "" {
+		for {
+			e.assemblyState.sectionIndex += 1
+			id := e.assemblyState.sectionIndex
+			internalFilename = fmt.Sprintf(sectionFileFormat, id)
+			if !e.hasInternalFilename(internalFilename) {
+				break
+			}
+		}
 	} else {
-		for item, section := range e.sections {
-			if section.filename == parentFilename {
-				parentIndex = item
-			}
-			if section.filename == internalFilename {
-				return "", &FilenameAlreadyUsedError{Filename: internalFilename}
-			}
-			if section.children != nil {
-				for _, subsection := range *section.children {
-					if subsection.filename == internalFilename {
-						return "", &FilenameAlreadyUsedError{Filename: internalFilename}
-					}
-				}
-			}
+		if e.hasInternalFilename(internalFilename) {
+			return "", &FilenameAlreadyUsedError{Filename: internalFilename}
 		}
 	}
 
